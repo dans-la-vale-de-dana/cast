@@ -348,8 +348,8 @@ async function startHost(attemptCode){
   hostPeer.on('call', call => {
     call.answer(screenStream);
     activeCalls.push(call);
-    updateHostStatus(true);
     boostQuality(call, maxQualityMode);
+    watchConnectionState(call);
     call.on('close', () => {
       activeCalls = activeCalls.filter(c=>c!==call);
       if(activeCalls.length===0) updateHostStatus(false);
@@ -366,6 +366,24 @@ async function startHost(attemptCode){
   });
 
   screenStream.getVideoTracks()[0].onended = stopHost;
+}
+
+function watchConnectionState(call){
+  const check = () => {
+    const pc = call.peerConnection;
+    if(!pc){ setTimeout(check, 300); return; }
+    pc.addEventListener('connectionstatechange', () => {
+      if(pc.connectionState === 'connected') updateHostStatus(true);
+      else if(['disconnected','failed','closed'].includes(pc.connectionState)){
+        updateHostStatus(false);
+        if(pc.connectionState === 'failed'){
+          showHostError("La connexion a échoué (réseau/pare-feu). Vérifie que les deux appareils sont sur le même WiFi.");
+        }
+      }
+    });
+    if(pc.connectionState === 'connected') updateHostStatus(true);
+  };
+  check();
 }
 
 function boostQuality(call, maxQualityMode){
@@ -425,7 +443,19 @@ function startViewer(){
 
   viewerPeer.on('open', () => {
     viewerCall = viewerPeer.call(targetId, new MediaStream());
+
+    const connectTimeout = setTimeout(() => {
+      if(!document.getElementById('viewer-video').srcObject){
+        showViewError("Connexion trop longue — vérifie que le PC diffuse bien et que les deux appareils sont sur le même WiFi.");
+        if(viewerCall) viewerCall.close();
+        if(viewerPeer) viewerPeer.destroy();
+        viewerPeer = null; viewerCall = null;
+        resetViewerBtn();
+      }
+    }, 15000);
+
     viewerCall.on('stream', remoteStream => {
+      clearTimeout(connectTimeout);
       const v = document.getElementById('viewer-video');
       v.srcObject = remoteStream;
       v.muted = true;
@@ -444,6 +474,7 @@ function startViewer(){
     });
     viewerCall.on('close', disconnectViewer);
     viewerCall.on('error', () => {
+      clearTimeout(connectTimeout);
       showViewError("Connexion perdue.");
       resetViewerBtn();
     });
@@ -497,4 +528,3 @@ window.addEventListener('beforeunload', () => { stopHost(); disconnectViewer(); 
 </script>
 </body>
 </html>
-
