@@ -286,7 +286,7 @@ const CUSTOM_PEER_SERVER = { host: 'signal-peer-server.onrender.com', port: 443,
 
 function makePeer(id){
   const opts = {
-    debug:1,
+    debug:3,
     config: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -384,14 +384,17 @@ async function startHost(attemptCode){
   });
 
   hostPeer.on('call', call => {
+    console.log('[HOST] Appel reçu de', call.peer);
     call.answer(screenStream);
     activeCalls.push(call);
     boostQuality(call, preset);
     watchConnectionState(call);
     call.on('close', () => {
+      console.log('[HOST] call close');
       activeCalls = activeCalls.filter(c=>c!==call);
       if(activeCalls.length===0) updateHostStatus(false);
     });
+    call.on('error', err => console.log('[HOST] call error:', err));
   });
 
   hostPeer.on('error', err => {
@@ -410,7 +413,9 @@ function watchConnectionState(call){
   const check = () => {
     const pc = call.peerConnection;
     if(!pc){ setTimeout(check, 300); return; }
+    console.log('[HOST] peerConnection prêt, état initial:', pc.connectionState, pc.iceConnectionState);
     pc.addEventListener('connectionstatechange', () => {
+      console.log('[HOST] connectionState →', pc.connectionState);
       if(pc.connectionState === 'connected') updateHostStatus(true);
       else if(['disconnected','failed','closed'].includes(pc.connectionState)){
         updateHostStatus(false);
@@ -418,6 +423,12 @@ function watchConnectionState(call){
           showHostError("La connexion a échoué (réseau/pare-feu). Vérifie que les deux appareils sont sur le même WiFi.");
         }
       }
+    });
+    pc.addEventListener('iceconnectionstatechange', () => {
+      console.log('[HOST] iceConnectionState →', pc.iceConnectionState);
+    });
+    pc.addEventListener('icecandidateerror', (e) => {
+      console.log('[HOST] icecandidateerror:', e.errorText, e.url);
     });
     if(pc.connectionState === 'connected') updateHostStatus(true);
   };
