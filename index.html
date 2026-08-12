@@ -285,7 +285,17 @@
 const CUSTOM_PEER_SERVER = { host: 'signal-peer-server.onrender.com', port: 443, path: '/', secure: true };
 
 function makePeer(id){
-  const opts = {debug:1};
+  const opts = {
+    debug:1,
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+      ]
+    }
+  };
   if(CUSTOM_PEER_SERVER) Object.assign(opts, CUSTOM_PEER_SERVER);
   return new Peer(id, opts);
 }
@@ -570,3 +580,4 @@ window.addEventListener('beforeunload', () => { stopHost(); disconnectViewer(); 
 </script>
 </body>
 </html>
+
