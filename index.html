@@ -383,18 +383,20 @@ async function startHost(attemptCode){
     document.querySelectorAll('#panel-host .ring').forEach(r=>r.classList.add('animate'));
   });
 
-  hostPeer.on('call', call => {
-    console.log('[HOST] Appel reçu de', call.peer);
-    call.answer(screenStream);
-    activeCalls.push(call);
-    boostQuality(call, preset);
-    watchConnectionState(call);
-    call.on('close', () => {
-      console.log('[HOST] call close');
-      activeCalls = activeCalls.filter(c=>c!==call);
-      if(activeCalls.length===0) updateHostStatus(false);
+  hostPeer.on('connection', dataConn => {
+    console.log('[HOST] Connexion de', dataConn.peer, '— lancement de l\'appel avec le flux');
+    dataConn.on('open', () => {
+      const call = hostPeer.call(dataConn.peer, screenStream);
+      activeCalls.push(call);
+      boostQuality(call, preset);
+      watchConnectionState(call);
+      call.on('close', () => {
+        console.log('[HOST] call close');
+        activeCalls = activeCalls.filter(c=>c!==call);
+        if(activeCalls.length===0) updateHostStatus(false);
+      });
+      call.on('error', err => console.log('[HOST] call error:', err));
     });
-    call.on('error', err => console.log('[HOST] call error:', err));
   });
 
   hostPeer.on('error', err => {
@@ -503,41 +505,47 @@ function startViewer(){
   viewerPeer.on('open', () => {
     clearTimeout(wakeupTimeout);
     clearTimeout(openTimeout);
-    viewerCall = viewerPeer.call(targetId, new MediaStream());
+
+    const dataConn = viewerPeer.connect(targetId);
 
     const connectTimeout = setTimeout(() => {
       if(!document.getElementById('viewer-video').srcObject){
         showViewError("Connexion trop longue — vérifie que le PC diffuse bien et que les deux appareils sont sur le même WiFi.");
-        if(viewerCall) viewerCall.close();
+        if(dataConn) dataConn.close();
         if(viewerPeer) viewerPeer.destroy();
         viewerPeer = null; viewerCall = null;
         resetViewerBtn();
       }
-    }, 15000);
+    }, 20000);
 
-    viewerCall.on('stream', remoteStream => {
-      clearTimeout(connectTimeout);
-      const v = document.getElementById('viewer-video');
-      v.srcObject = remoteStream;
-      v.muted = true;
-      document.getElementById('viewer-mute').textContent = '🔇';
-      v.play().catch(()=>{ /* nécessitera un tap si bloqué */ });
-      document.getElementById('viewer-video-wrap').classList.remove('hidden');
-      resetViewerBtn();
-      // Latence minimale : on vide le buffer de lecture au maximum
-      const pc = viewerCall.peerConnection;
-      if(pc){
-        pc.getReceivers().forEach(r => {
-          if('playoutDelayHint' in r) r.playoutDelayHint = 0;
-          if('jitterBufferTarget' in r) r.jitterBufferTarget = 0;
-        });
-      }
-    });
-    viewerCall.on('close', disconnectViewer);
-    viewerCall.on('error', () => {
-      clearTimeout(connectTimeout);
-      showViewError("Connexion perdue.");
-      resetViewerBtn();
+    viewerPeer.on('call', call => {
+      viewerCall = call;
+      call.answer(); // rien à envoyer, on ne fait que recevoir le flux du PC
+
+      call.on('stream', remoteStream => {
+        clearTimeout(connectTimeout);
+        const v = document.getElementById('viewer-video');
+        v.srcObject = remoteStream;
+        v.muted = true;
+        document.getElementById('viewer-mute').textContent = '🔇';
+        v.play().catch(()=>{ /* nécessitera un tap si bloqué */ });
+        document.getElementById('viewer-video-wrap').classList.remove('hidden');
+        resetViewerBtn();
+        // Latence minimale : on vide le buffer de lecture au maximum
+        const pc = call.peerConnection;
+        if(pc){
+          pc.getReceivers().forEach(r => {
+            if('playoutDelayHint' in r) r.playoutDelayHint = 0;
+            if('jitterBufferTarget' in r) r.jitterBufferTarget = 0;
+          });
+        }
+      });
+      call.on('close', disconnectViewer);
+      call.on('error', () => {
+        clearTimeout(connectTimeout);
+        showViewError("Connexion perdue.");
+        resetViewerBtn();
+      });
     });
   });
 
@@ -591,4 +599,3 @@ window.addEventListener('beforeunload', () => { stopHost(); disconnectViewer(); 
 </script>
 </body>
 </html>
-
