@@ -160,6 +160,20 @@
     color:#fff; font-size:16px; display:flex; align-items:center; justify-content:center;
     backdrop-filter:blur(10px); cursor:pointer; z-index:51;
   }
+  #viewer-fullscreen{
+    position:absolute; top:env(safe-area-inset-top,16px); right:64px;
+    width:38px; height:38px; border-radius:50%;
+    background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2);
+    color:#fff; font-size:17px; display:flex; align-items:center; justify-content:center;
+    backdrop-filter:blur(10px); cursor:pointer; z-index:51;
+  }
+  #viewer-mute{
+    position:absolute; top:env(safe-area-inset-top,16px); right:112px;
+    width:38px; height:38px; border-radius:50%;
+    background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2);
+    color:#fff; font-size:15px; display:flex; align-items:center; justify-content:center;
+    backdrop-filter:blur(10px); cursor:pointer; z-index:51;
+  }
   #viewer-hint{
     position:absolute; bottom:env(safe-area-inset-bottom,24px); left:50%; transform:translateX(-50%);
     color:rgba(255,255,255,0.55); font-size:12px; letter-spacing:.03em;
@@ -254,8 +268,10 @@
 <!-- Fullscreen viewer -->
 <div id="viewer-video-wrap" class="hidden">
   <button id="viewer-close" onclick="disconnectViewer()">✕</button>
-  <video id="viewer-video" autoplay playsinline></video>
-  <div id="viewer-hint">Touche l'écran deux fois pour le plein écran natif</div>
+  <button id="viewer-fullscreen" onclick="goFullscreen()">⛶</button>
+  <button id="viewer-mute" onclick="toggleMute()">🔇</button>
+  <video id="viewer-video" autoplay playsinline muted></video>
+  <div id="viewer-hint">Plein écran : bouton ⛶ ou double-tap sur l'écran</div>
 </div>
 
 <script>
@@ -410,7 +426,11 @@ function startViewer(){
   viewerPeer.on('open', () => {
     viewerCall = viewerPeer.call(targetId, new MediaStream());
     viewerCall.on('stream', remoteStream => {
-      document.getElementById('viewer-video').srcObject = remoteStream;
+      const v = document.getElementById('viewer-video');
+      v.srcObject = remoteStream;
+      v.muted = true;
+      document.getElementById('viewer-mute').textContent = '🔇';
+      v.play().catch(()=>{ /* nécessitera un tap si bloqué */ });
       document.getElementById('viewer-video-wrap').classList.remove('hidden');
       resetViewerBtn();
       // Latence minimale : on vide le buffer de lecture au maximum
@@ -454,11 +474,27 @@ function disconnectViewer(){
 }
 
 document.getElementById('viewer-video').addEventListener('dblclick', function(){
-  if(this.requestFullscreen) this.requestFullscreen();
-  else if(this.webkitEnterFullscreen) this.webkitEnterFullscreen();
+  goFullscreen();
 });
+
+function goFullscreen(){
+  const v = document.getElementById('viewer-video');
+  if(v.webkitEnterFullscreen){ v.webkitEnterFullscreen(); } // iOS/iPadOS Safari
+  else if(v.requestFullscreen){ v.requestFullscreen(); }
+  else if(document.getElementById('viewer-video-wrap').requestFullscreen){
+    document.getElementById('viewer-video-wrap').requestFullscreen();
+  }
+}
+
+function toggleMute(){
+  const v = document.getElementById('viewer-video');
+  v.muted = !v.muted;
+  document.getElementById('viewer-mute').textContent = v.muted ? '🔇' : '🔊';
+  if(!v.muted){ v.play().catch(()=>{}); }
+}
 
 window.addEventListener('beforeunload', () => { stopHost(); disconnectViewer(); });
 </script>
 </body>
 </html>
+
