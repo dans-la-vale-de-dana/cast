@@ -227,12 +227,17 @@
     <div id="host-error" class="error-box hidden"></div>
 
     <div id="host-idle">
-      <label style="display:flex; align-items:center; gap:10px; margin-bottom:16px; padding:12px 14px; background:rgba(79,224,216,0.06); border:1px solid rgba(79,224,216,0.25); border-radius:12px; cursor:pointer; font-size:13.5px;">
-        <input type="checkbox" id="max-quality-toggle" checked style="width:18px;height:18px; accent-color:var(--cyan);">
-        <span><b style="color:var(--cyan);">Mode Qualité Max</b><br><span style="color:var(--muted); font-size:12px;">4K, bitrate max, priorité à la netteté plutôt qu'à la fluidité</span></span>
-      </label>
+      <div style="margin-bottom:16px;">
+        <div style="font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px;">Qualité du flux</div>
+        <select id="quality-select" style="width:100%; padding:14px; border-radius:12px; background:rgba(255,255,255,0.05); border:1px solid var(--panel-border); color:var(--text); font-family:inherit; font-size:14.5px;">
+          <option value="eco">Économique — 720p, ~3 Mbps (le plus fiable)</option>
+          <option value="standard" selected>Standard — 1080p, ~10 Mbps</option>
+          <option value="haute">Élevée — 1440p, ~25 Mbps</option>
+          <option value="max">Maximum — 4K, ~50 Mbps (réseau costaud requis)</option>
+        </select>
+      </div>
       <button class="primary" onclick="startHost()">Partager mon écran</button>
-      <p class="note">Utilise <b>Chrome</b> ou <b>Edge</b> sur ton PC. Safari desktop fonctionne aussi. Une fenêtre va te demander de choisir l'écran ou l'onglet à partager.<br><br>Pour de vrais résultats en 4K : connecte les deux appareils en <b>WiFi 5GHz</b> (pas 2.4GHz), idéalement proches du routeur.</p>
+      <p class="note">Utilise <b>Chrome</b> ou <b>Edge</b> sur ton PC. Safari desktop fonctionne aussi. Une fenêtre va te demander de choisir l'écran ou l'onglet à partager.<br><br>Si ça ne se connecte pas en Maximum, essaie <b>Économique</b> : ça réduit les chances d'échec réseau.</p>
     </div>
 
     <div id="host-live" class="hidden">
@@ -275,6 +280,16 @@
 </div>
 
 <script>
+// Configure ici l'adresse de ton serveur PeerJS (Render). Laisse à null pour utiliser
+// le serveur public par défaut (0.peerjs.com), moins fiable.
+const CUSTOM_PEER_SERVER = { host: 'signal-peer-server.onrender.com', port: 443, path: '/', secure: true };
+
+function makePeer(id){
+  const opts = {debug:1};
+  if(CUSTOM_PEER_SERVER) Object.assign(opts, CUSTOM_PEER_SERVER);
+  return new Peer(id, opts);
+}
+
 let mode = 'host';
 let hostPeer = null, screenStream = null, activeCalls = [];
 let viewerPeer = null, viewerCall = null;
@@ -311,13 +326,21 @@ async function startHost(attemptCode){
     showHostError("Ce navigateur ne supporte pas le partage d'écran. Essaie Chrome ou Edge.");
     return;
   }
-  const maxQualityMode = document.getElementById('max-quality-toggle').checked;
+  const QUALITY_PRESETS = {
+    eco:      {w:1280, h:720,  fps:30, bitrate:3000000},
+    standard: {w:1920, h:1080, fps:30, bitrate:10000000},
+    haute:    {w:2560, h:1440, fps:60, bitrate:25000000},
+    max:      {w:3840, h:2160, fps:60, bitrate:50000000}
+  };
+  const qualityKey = document.getElementById('quality-select').value;
+  const preset = QUALITY_PRESETS[qualityKey];
+
   try{
     screenStream = await navigator.mediaDevices.getDisplayMedia({
       video:{
-        frameRate:{ideal:60, max:60},
-        width:{ideal:3840, max:3840},
-        height:{ideal:2160, max:2160}
+        frameRate:{ideal:preset.fps, max:preset.fps},
+        width:{ideal:preset.w, max:preset.w},
+        height:{ideal:preset.h, max:preset.h}
       },
       audio:{
         echoCancellation:false,
@@ -336,9 +359,14 @@ async function startHost(attemptCode){
   window.__actualRes = actualSettings.width + '×' + actualSettings.height;
 
   const code = attemptCode || genCode();
-  hostPeer = new Peer('cast-' + code, {debug:0});
+  hostPeer = makePeer('cast-' + code);
+
+  const signalTimeout = setTimeout(() => {
+    showHostError("Impossible de joindre le serveur de connexion. Le serveur public PeerJS est souvent instable — pense à déployer ton propre serveur (voir peer-server/).");
+  }, 10000);
 
   hostPeer.on('open', () => {
+    clearTimeout(signalTimeout);
     document.getElementById('host-idle').classList.add('hidden');
     document.getElementById('host-live').classList.remove('hidden');
     document.getElementById('host-code').textContent = code;
@@ -348,7 +376,7 @@ async function startHost(attemptCode){
   hostPeer.on('call', call => {
     call.answer(screenStream);
     activeCalls.push(call);
-    boostQuality(call, maxQualityMode);
+    boostQuality(call, preset);
     watchConnectionState(call);
     call.on('close', () => {
       activeCalls = activeCalls.filter(c=>c!==call);
@@ -386,7 +414,7 @@ function watchConnectionState(call){
   check();
 }
 
-function boostQuality(call, maxQualityMode){
+function boostQuality(call, preset){
   const tryBoost = () => {
     const pc = call.peerConnection;
     if(!pc){ setTimeout(tryBoost, 300); return; }
@@ -395,16 +423,14 @@ function boostQuality(call, maxQualityMode){
     const params = sender.getParameters();
     if(!params.encodings || params.encodings.length === 0) params.encodings = [{}];
 
-    const bitrate = maxQualityMode ? 50000000 : 12000000; // 50 Mbps vs 12 Mbps
-    params.encodings[0].maxBitrate = bitrate;
-    params.encodings[0].maxFramerate = 60;
+    params.encodings[0].maxBitrate = preset.bitrate;
+    params.encodings[0].maxFramerate = preset.fps;
     params.encodings[0].scaleResolutionDownBy = 1.0; // ne jamais réduire la résolution côté encodeur
 
     if(params.degradationPreference !== undefined){
       // maintain-resolution = privilégie la netteté, quitte à perdre des frames si le wifi sature
       params.degradationPreference = 'maintain-resolution';
     }
-    // Champ expérimental Chrome, ignoré silencieusement ailleurs
     try{ params.encodings[0].networkPriority = 'high'; }catch(e){}
 
     sender.setParameters(params).catch(()=>{});
@@ -439,7 +465,7 @@ function startViewer(){
   document.getElementById('view-connect-btn').disabled = true;
   document.getElementById('view-connect-btn').textContent = 'Connexion…';
 
-  viewerPeer = new Peer(undefined, {debug:0});
+  viewerPeer = makePeer(undefined);
 
   viewerPeer.on('open', () => {
     viewerCall = viewerPeer.call(targetId, new MediaStream());
