@@ -362,8 +362,8 @@ async function startHost(attemptCode){
   hostPeer = makePeer('cast-' + code);
 
   const signalTimeout = setTimeout(() => {
-    showHostError("Impossible de joindre le serveur de connexion. Le serveur public PeerJS est souvent instable — pense à déployer ton propre serveur (voir peer-server/).");
-  }, 10000);
+    showHostError("Toujours rien après 45s. Réessaie une seconde fois (le serveur gratuit Render met parfois du temps à se réveiller, mais reste rapide juste après).");
+  }, 45000);
 
   hostPeer.on('open', () => {
     clearTimeout(signalTimeout);
@@ -467,7 +467,21 @@ function startViewer(){
 
   viewerPeer = makePeer(undefined);
 
+  document.getElementById('view-connect-btn').textContent = 'Réveil du serveur…';
+
+  const wakeupTimeout = setTimeout(() => {
+    document.getElementById('view-connect-btn').textContent = 'Connexion…';
+  }, 3000);
+
+  const openTimeout = setTimeout(() => {
+    showViewError("Toujours rien après 45s. Le serveur met parfois du temps à se réveiller — réessaie une seconde fois, ça devrait être rapide.");
+    if(viewerPeer){ viewerPeer.destroy(); viewerPeer = null; }
+    resetViewerBtn();
+  }, 45000);
+
   viewerPeer.on('open', () => {
+    clearTimeout(wakeupTimeout);
+    clearTimeout(openTimeout);
     viewerCall = viewerPeer.call(targetId, new MediaStream());
 
     const connectTimeout = setTimeout(() => {
@@ -507,6 +521,8 @@ function startViewer(){
   });
 
   viewerPeer.on('error', err => {
+    clearTimeout(wakeupTimeout);
+    clearTimeout(openTimeout);
     if(err.type === 'peer-unavailable'){
       showViewError("Aucun PC ne diffuse avec ce code. Vérifie qu'il est bien en train de partager.");
     } else {
