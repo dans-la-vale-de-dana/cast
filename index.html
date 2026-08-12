@@ -348,6 +348,7 @@ async function startHost(attemptCode){
   try{
     screenStream = await navigator.mediaDevices.getDisplayMedia({
       video:{
+        displaySurface:'browser', // suggère "Onglet Chrome" par défaut dans la fenêtre de choix
         frameRate:{ideal:preset.fps, max:preset.fps},
         width:{ideal:preset.w, max:preset.w},
         height:{ideal:preset.h, max:preset.h}
