@@ -213,8 +213,12 @@
     <div id="host-error" class="error-box hidden"></div>
 
     <div id="host-idle">
+      <label style="display:flex; align-items:center; gap:10px; margin-bottom:16px; padding:12px 14px; background:rgba(79,224,216,0.06); border:1px solid rgba(79,224,216,0.25); border-radius:12px; cursor:pointer; font-size:13.5px;">
+        <input type="checkbox" id="max-quality-toggle" checked style="width:18px;height:18px; accent-color:var(--cyan);">
+        <span><b style="color:var(--cyan);">Mode Qualité Max</b><br><span style="color:var(--muted); font-size:12px;">4K, bitrate max, priorité à la netteté plutôt qu'à la fluidité</span></span>
+      </label>
       <button class="primary" onclick="startHost()">Partager mon écran</button>
-      <p class="note">Utilise <b>Chrome</b> ou <b>Edge</b> sur ton PC. Safari desktop fonctionne aussi. Une fenêtre va te demander de choisir l'écran ou l'onglet à partager.</p>
+      <p class="note">Utilise <b>Chrome</b> ou <b>Edge</b> sur ton PC. Safari desktop fonctionne aussi. Une fenêtre va te demander de choisir l'écran ou l'onglet à partager.<br><br>Pour de vrais résultats en 4K : connecte les deux appareils en <b>WiFi 5GHz</b> (pas 2.4GHz), idéalement proches du routeur.</p>
     </div>
 
     <div id="host-live" class="hidden">
@@ -291,12 +295,13 @@ async function startHost(attemptCode){
     showHostError("Ce navigateur ne supporte pas le partage d'écran. Essaie Chrome ou Edge.");
     return;
   }
+  const maxQualityMode = document.getElementById('max-quality-toggle').checked;
   try{
     screenStream = await navigator.mediaDevices.getDisplayMedia({
       video:{
         frameRate:{ideal:60, max:60},
-        width:{ideal:2560},
-        height:{ideal:1440}
+        width:{ideal:3840, max:3840},
+        height:{ideal:2160, max:2160}
       },
       audio:{
         echoCancellation:false,
@@ -311,6 +316,8 @@ async function startHost(attemptCode){
   }
   const vTrack = screenStream.getVideoTracks()[0];
   if(vTrack.contentHint !== undefined) vTrack.contentHint = 'detail';
+  const actualSettings = vTrack.getSettings();
+  window.__actualRes = actualSettings.width + '×' + actualSettings.height;
 
   const code = attemptCode || genCode();
   hostPeer = new Peer('cast-' + code, {debug:0});
@@ -326,7 +333,7 @@ async function startHost(attemptCode){
     call.answer(screenStream);
     activeCalls.push(call);
     updateHostStatus(true);
-    boostQuality(call);
+    boostQuality(call, maxQualityMode);
     call.on('close', () => {
       activeCalls = activeCalls.filter(c=>c!==call);
       if(activeCalls.length===0) updateHostStatus(false);
@@ -345,7 +352,7 @@ async function startHost(attemptCode){
   screenStream.getVideoTracks()[0].onended = stopHost;
 }
 
-function boostQuality(call){
+function boostQuality(call, maxQualityMode){
   const tryBoost = () => {
     const pc = call.peerConnection;
     if(!pc){ setTimeout(tryBoost, 300); return; }
@@ -353,9 +360,19 @@ function boostQuality(call){
     if(!sender){ setTimeout(tryBoost, 300); return; }
     const params = sender.getParameters();
     if(!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-    params.encodings[0].maxBitrate = 12000000; // ~12 Mbps
+
+    const bitrate = maxQualityMode ? 50000000 : 12000000; // 50 Mbps vs 12 Mbps
+    params.encodings[0].maxBitrate = bitrate;
     params.encodings[0].maxFramerate = 60;
-    if(params.degradationPreference !== undefined) params.degradationPreference = 'maintain-resolution';
+    params.encodings[0].scaleResolutionDownBy = 1.0; // ne jamais réduire la résolution côté encodeur
+
+    if(params.degradationPreference !== undefined){
+      // maintain-resolution = privilégie la netteté, quitte à perdre des frames si le wifi sature
+      params.degradationPreference = 'maintain-resolution';
+    }
+    // Champ expérimental Chrome, ignoré silencieusement ailleurs
+    try{ params.encodings[0].networkPriority = 'high'; }catch(e){}
+
     sender.setParameters(params).catch(()=>{});
   };
   tryBoost();
@@ -364,7 +381,7 @@ function boostQuality(call){
 function updateHostStatus(connected){
   document.getElementById('host-status-dot').classList.toggle('live', connected);
   document.getElementById('host-status-text').textContent = connected
-    ? 'iPad connecté — diffusion en cours'
+    ? 'Connecté — diffusion en ' + (window.__actualRes || '…')
     : 'En attente de connexion…';
 }
 
@@ -396,6 +413,14 @@ function startViewer(){
       document.getElementById('viewer-video').srcObject = remoteStream;
       document.getElementById('viewer-video-wrap').classList.remove('hidden');
       resetViewerBtn();
+      // Latence minimale : on vide le buffer de lecture au maximum
+      const pc = viewerCall.peerConnection;
+      if(pc){
+        pc.getReceivers().forEach(r => {
+          if('playoutDelayHint' in r) r.playoutDelayHint = 0;
+          if('jitterBufferTarget' in r) r.jitterBufferTarget = 0;
+        });
+      }
     });
     viewerCall.on('close', disconnectViewer);
     viewerCall.on('error', () => {
